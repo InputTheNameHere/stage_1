@@ -1,23 +1,15 @@
-# macOS
+# macOS / IDE / venv
 .DS_Store
-
-# Python
+.idea/
 .venv/
 __pycache__/
 *.pyc
 
-# >>> GENERATED DATA (not to be tracked)
-# datalake with downloaded books
+# generated data & artifacts
 data storage/
 data_storage/
+datamarts/
+control/
 
-# generated inverted indexes and databases
-datamarts/inverted_index_fs/
-datamarts/inverted_index_monolith/
-datamarts/SQLite/
-
-# control files
-control/indexed.txt
-
-# logs and misc
+# logs
 *.log
