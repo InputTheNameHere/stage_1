@@ -36,5 +36,3 @@ def download_book(book_id:int):
     with open(header_path,"w",encoding="utf-8")as f:
         f.write(header.strip())
     return True
-
-download_book(1342)

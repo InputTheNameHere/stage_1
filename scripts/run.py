@@ -35,6 +35,11 @@ try:
 except Exception:
     store_metadata_postgres = None
 
+try:
+    from metadata_builders.metadata_mongo import store_metadata_mongo
+except Exception:
+    store_metadata_mongo = None
+
 
 # Control-file helpers
 def ensure_control_files(to_path: Path, downloaded_path: Path, failed_path: Path, start: int = None, end: int = None, overwrite_to_download: bool = True):
@@ -153,10 +158,12 @@ def main():
     parser.add_argument("--sqlite-dry", action="store_true", help="Run SQLite store in dry mode")
     parser.add_argument("--postgres", action="store_true", help="After downloads run Postgres store")
     parser.add_argument("--postgres-dry", action="store_true", help="Run Postgres store in dry mode")
+    parser.add_argument("--mongo", action="store_true", help="After downloads run Mongo store")
+    parser.add_argument("--mongo-dry", action="store_true", help="Run Mongo store in dry mode")
 
     # Here we can set default database for metadata
     """
-    if "--sqlite" or "--sqlite-dry" or "--postgres" or "--postgres-dry" not in sys.argv:
+    if "--sqlite" or "--sqlite-dry" or "--postgres" or "--postgres-dry" or "--mongo" or "--mongo-dry" not in sys.argv:
         sys.argv += ["--sqlite"]
     """
 
@@ -193,6 +200,13 @@ def main():
         else:
             print("[INFO] Running Postgres metadata store...")
             store_metadata_postgres(datalake_root=str(datalake_default), dry_run=args.postgres_dry)
+
+    if args.mongo or args.mongo_dry:
+        if store_metadata_mongo is None:
+            print("[WARN] store_metadata_mongo not available (module import failed). Skipping.")
+        else:
+            print("[INFO] Running Mongo metadata store...")
+            store_metadata_mongo(datalake_root=str(datalake_default), dry_run=args.mongo_dry)
 
     print("[INFO] run.py finished.")
 
