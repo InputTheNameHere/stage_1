@@ -1,174 +1,72 @@
 """
-It scans the datalake for files matching "*_header.txt",
-extracts metadata (Title, Author, Language) using line-based regex heuristics
-and writes the results to a SQLite database (datamarts/metadata.db by default).
-
-
-    from metadata_sqlite import build_metadata_sqlite
-    build_metadata_sqlite(datalake_root="path/to/datalake", db_path="path/to/metadata.db", dry_run=False)
+Public function to store metadata into SQLite by reusing metadata_extractor.gather_metadata.
 """
 
-import re
 import sqlite3
 from pathlib import Path
-from datetime import datetime
-import sys
+from typing import Optional
+from metadata_extractor import gather_metadata
 
-def build_metadata_sqlite(datalake_root: str = None, db_path: str = None, dry_run: bool = False):
+
+def store_metadata_sqlite(datalake_root: Optional[str] = None, db_path: Optional[str] = None, dry_run: bool = False) -> int:
     """
-    Scan datalake for *_header.txt files, extract metadata and store into SQLite.
+    Gather metadata with gather_metadata() and store into SQLite.
 
     Parameters:
-    - datalake_root: (str) optional path to datalake root. If None, defaults to "<repo_root>/data storage/datalake".
-    - db_path: (str) optional path to sqlite file. If None, defaults to "<repo_root>/datamarts/metadata.db".
-    - dry_run: (bool) if True, do not write to DB; only print what would be written.
+      - datalake_root: path to datalake root (optional)
+      - db_path: path to sqlite file (optional). Defaults to datamarts/SQLite/metadata.db relative to repo root.
+      - dry_run: if True, only print what would be inserted (no DB writes).
 
     Returns:
-    - int: number of processed header files (inserted or updated)
+      - number of processed records (int)
     """
 
-    # ---------- Setup default paths:
-
-    # Determine repository base path.
-    # Using Path(__file__).resolve().parents[2] assumes this file sits in
-    # a subfolders of the subfolders of the repo. If __file__ is missing
-    # fall back to current working directory.
+    # Determine default paths
     try:
         base = Path(__file__).resolve().parents[2]
     except NameError:
-        # __file__ is not defined in some interactive environments
         base = Path.cwd()
 
-    # Default datalake location
-    if datalake_root:
-        dl_root = Path(datalake_root)
-    else:
-        dl_root = base / "data storage" / "datalake"
+    dl_root = Path(datalake_root) if datalake_root else base / "data storage" / "datalake"
+    db_file = Path(db_path) if db_path else base / "datamarts" / "SQLite" / "metadata.db"
 
-    # Default SQLite path
-    if db_path:
-        db_file = Path(db_path)
-    else:
-        db_file = base / "datamarts" / "metadata.db"
+    print(f"[INFO] SQLite store invoked: datalake={dl_root} db={db_file} dry_run={dry_run}")
 
-    # Print starting info for clarity
-    print(f"[INFO] datalake_root = {dl_root}")
-    print(f"[INFO] db_file = {db_file}")
-    if dry_run:
-        print("[INFO] Running in dry_run mode: no DB writes will be performed.")
-
-    # Prepare simple regexes for header parsing
-    # We look for lines beginning with Title:, Author:, Language:
-    RE_TITLE = re.compile(r"^\s*Title:\s*(.+)$", re.IGNORECASE)
-    RE_AUTHOR = re.compile(r"^\s*Author:\s*(.+)$", re.IGNORECASE)
-    RE_LANGUAGE = re.compile(r"^\s*Language:\s*(.+)$", re.IGNORECASE)
-
-    def extract_meta_from_text(text: str):
-        """
-        Scan header text line-by-line and try to find title/author/language.
-        Stop early if all three are found.
-        Returns a tuple (title, author, language) where missing values are None.
-        """
-        title = author = language = None
-        for line in text.splitlines():
-            if title is None:
-                m = RE_TITLE.match(line)
-                if m:
-                    title = m.group(1).strip()
-            if author is None:
-                m = RE_AUTHOR.match(line)
-                if m:
-                    author = m.group(1).strip()
-            if language is None:
-                m = RE_LANGUAGE.match(line)
-                if m:
-                    language = m.group(1).strip()
-            if title and author and language:
-                break
-        return title, author, language
-
-    def parse_book_id_from_path(p: Path):
-        """
-        Expect header filenames like '12345_header.txt' or '12345_header'.
-        Extract leading integer as book_id, return None if format unknown.
-        """
-        stem = p.stem
-        parts = stem.split("_")
-        try:
-            return int(parts[0])
-        except Exception:
-            return None
-
-    # Find header files
-    if not dl_root.exists():
-        print(f"[ERROR] datalake root does not exist: {dl_root}", file=sys.stderr)
+    # Gather metadata
+    rows = gather_metadata(str(dl_root) if dl_root else None)
+    if not rows:
+        print("[INFO] No metadata rows found.")
         return 0
 
-    header_files = sorted(dl_root.rglob("*_header.txt"))
-    print(f"[INFO] Found {len(header_files)} header files under datalake root.")
+    # Dry run: print a sample and exit
+    if dry_run:
+        print("[DRY RUN] Sample of metadata (first 10):")
+        for r in rows[:10]:
+            print(r)
+        return len(rows)
 
-    # Prepare SQLite DB (unless dry_run)
-    conn = None
-    cur = None
-    if not dry_run:
-        # Ensure parent folder exists
-        db_file.parent.mkdir(parents=True, exist_ok=True)
-        # Connect to sqlite (file will be created if missing)
-        conn = sqlite3.connect(str(db_file))
-        cur = conn.cursor()
+    # Prepare DB and insert
+    db_file.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(db_file))
+    cur = conn.cursor()
 
-        # Create table if not exists.
-        # We include body_path so we can quickly find the corresponding body file.
-        # extracted_at stores the UTC timestamp when the metadata was recorded.
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS books (
-                book_id INTEGER PRIMARY KEY,
-                title TEXT,
-                author TEXT,
-                language TEXT,
-                body_path TEXT,
-                extracted_at TEXT
-            )
-        """)
-        # Helpful indexes for common queries (filter by author/title)
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_books_author ON books(author)")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_books_title ON books(title)")
-        conn.commit()
-        print(f"[INFO] Initialized SQLite DB at {db_file}")
+    # Create table (simple schema) and indexes
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS books (
+            book_id INTEGER PRIMARY KEY,
+            title TEXT,
+            author TEXT,
+            language TEXT,
+            body_path TEXT,
+            extracted_at TEXT
+        )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_books_author ON books(author)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_books_title ON books(title)")
+    conn.commit()
 
-    # Process each header file
     processed = 0
-    for hf in header_files:
-        book_id = parse_book_id_from_path(hf)
-        if book_id is None:
-            # Skip files that don't follow the expected naming convention.
-            print(f"[WARN] Skipping header file with unexpected name format: {hf}")
-            continue
-
-        # Try reading header content. Use errors='ignore' to be robust against encoding issues.
-        try:
-            header_text = hf.read_text(encoding="utf-8", errors="ignore")
-        except Exception as e:
-            print(f"[WARN] Could not read header file {hf}: {e}")
-            continue
-
-        # Extract metadata fields using the helper above
-        title, author, language = extract_meta_from_text(header_text)
-
-        # Compute the expected path to the corresponding body file.
-        # We expect a file named "<book_id>_body.txt" in the same directory as the header.
-        body_path = str(hf.with_name(f"{book_id}_body.txt"))
-
-        # Timestamp when we extracted the metadata (UTC ISO format)
-        extracted_at = datetime.utcnow().isoformat()
-
-        if dry_run:
-            # In dry run mode, just print what we would insert.
-            print(f"[DRY RUN] book_id={book_id}, title={title!r}, author={author!r}, language={language!r}, body_path={body_path}")
-            processed += 1
-            continue
-
-        # Insert or replace to make function idempotent: running it multiple times will update records.
+    for (book_id, title, author, language, body_path, extracted_at) in rows:
         try:
             cur.execute("""
                 INSERT OR REPLACE INTO books(book_id, title, author, language, body_path, extracted_at)
@@ -176,17 +74,9 @@ def build_metadata_sqlite(datalake_root: str = None, db_path: str = None, dry_ru
             """, (book_id, title, author, language, body_path, extracted_at))
             processed += 1
         except Exception as e:
-            print(f"[ERROR] DB insert failed for book_id={book_id}: {e}", file=sys.stderr)
+            print(f"[WARN] SQLite insert failed for book_id={book_id}: {e}")
 
-    # Commit and close DB connection
-    if conn:
-        conn.commit()
-        conn.close()
-        print(f"[OK] Wrote/updated {processed} records into SQLite database: {db_file}")
-    else:
-        print(f"[DRY RUN] Processed {processed} header files (no DB writes).")
-
+    conn.commit()
+    conn.close()
+    print(f"[OK] SQLite: stored {processed} records into {db_file}")
     return processed
-
-if __name__ == "__main__":
-    build_metadata_sqlite(dry_run=False)
