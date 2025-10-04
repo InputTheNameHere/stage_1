@@ -1,0 +1,23 @@
+# macOS
+.DS_Store
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# >>> GENERATED DATA (not to be tracked)
+# datalake with downloaded books
+data storage/
+data_storage/
+
+# generated inverted indexes and databases
+datamarts/inverted_index_fs/
+datamarts/inverted_index_monolith/
+datamarts/SQLite/
+
+# control files
+control/indexed.txt
+
+# logs and misc
+*.log
