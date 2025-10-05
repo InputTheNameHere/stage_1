@@ -1,77 +1,77 @@
+"""
+Common helpers shared by all index builders (monolith, FS, Mongo).
+
+We keep things simple:
+- detect repo root and datalake path (supports "data storage/datalake" and "data_storage/datalake")
+- tokenize text (lowercase, remove short tokens and simple stopwords)
+- iterate over all *_body.txt files and yield (book_id, path, text)
+- write control/indexed.txt with processed book IDs
+"""
 from __future__ import annotations
-import os, re, json, time
-from collections import defaultdict
+
+import re
 from pathlib import Path
 from typing import Dict, Iterable, Iterator, List, Tuple
 
-# A small stopword set to keep the example simple.
+# A small stopword list is enough for Stage 1 demos
 STOPWORDS = {
     "the","and","to","of","a","in","that","is","it","for","on","as","with","was","at","by","an",
-    "be","this","are","from","or","but","not","have","had","has","were","which","you","your",
-    "i","he","she","they","we","his","her","their","its","my","me","our","us"
+    "be","this","are","from","or","but","not","have","had","has","were","which",
+    "i","you","he","she","we","they","his","her","their","its","my","me","our","us"
 }
 
-def get_repo_root(start: Path | None = None) -> Path:
-    """
-    Resolve the repository root based on this file location.
+TOKEN_RE = re.compile(r"[A-Za-z0-9']+")
 
-    File layout:
-      <repo_root>/scripts/indexers/common.py
-    parents:
-      common.py (0) -> indexers (1) -> scripts (2) -> <repo_root> (3)
-    We want <repo_root>, hence parents[2].
-    """
+
+def get_repo_root(start: Path | None = None) -> Path:
+    """Go up from this file: scripts/indexers/common.py -> indexers -> scripts -> <repo>"""
     start = start or Path(__file__).resolve()
     return start.parents[2]
 
+
 def guess_datalake_root(repo_root: Path) -> Path:
     """
-    Try to guess where the datalake lives.
-    The original project used a folder with a space: "data storage/datalake".
-    We also support an underscored variant "data_storage/datalake".
+    Return first existing path among:
+      <repo>/data storage/datalake
+      <repo>/data_storage/datalake
     """
     p1 = repo_root / "data storage" / "datalake"
     if p1.exists():
         return p1
-    p2 = repo_root / "data_storage" / "datalake"
-    return p2
+    return repo_root / "data_storage" / "datalake"
 
-# Simple token regex: letters, digits, and apostrophes (keeps "don't")
-_word = re.compile(r"[A-Za-z0-9']+")
 
 def tokenize(text: str) -> List[str]:
-    """
-    Lowercase tokenization with stopword removal and min length = 2.
-    Returns a list of terms to be indexed.
-    """
-    toks = [t.lower() for t in _word.findall(text)]
-    return [t for t in toks if t not in STOPWORDS and len(t) > 1]
+    """Lowercase, split by regex, remove short tokens and stopwords."""
+    raw = TOKEN_RE.findall(text)
+    lowered = (t.lower() for t in raw)
+    return [t for t in lowered if len(t) > 1 and t not in STOPWORDS]
+
 
 def iter_bodies(datalake_root: Path) -> Iterator[Tuple[int, Path, str]]:
     """
-    Iterate over all *_body.txt files under datalake and yield:
-      (book_id, file_path, text)
-    book_id is extracted from the filename prefix, e.g. '1342_body.txt' -> 1342.
+    Yield all docs as (book_id, path, text) for files like: 1342_body.txt
+    We silently skip unreadable or malformed files.
     """
-    for body in datalake_root.rglob("*_body.txt"):
+    for body_path in datalake_root.rglob("*_body.txt"):
+        name = body_path.stem  # "1342_body"
         try:
-            bid = int(body.stem.split("_")[0])
+            book_id = int(name.split("_")[0])
         except Exception:
-            # Skip files that do not follow the <id>_body.txt naming convention
             continue
         try:
-            txt = body.read_text(encoding="utf-8", errors="ignore")
+            text = body_path.read_text(encoding="utf-8", errors="ignore")
         except Exception:
-            # Skip unreadable files
             continue
-        yield bid, body, txt
+        yield book_id, body_path, text
+
 
 def write_indexed_list(processed_ids: Iterable[int], control_dir: Path) -> None:
     """
-    Write the sorted unique list of processed doc IDs into control/indexed.txt.
-    This serves as a simple control/trace of what has been indexed.
+    Create control/indexed.txt with one doc ID per line.
+    This is the "control layer" that tells us which documents are already indexed.
     """
     control_dir.mkdir(parents=True, exist_ok=True)
     out = control_dir / "indexed.txt"
-    uniq = sorted(set(processed_ids))
-    out.write_text("\n".join(map(str, uniq)) + ("\n" if uniq else ""))
+    ids_sorted = sorted(set(int(x) for x in processed_ids))
+    out.write_text("\n".join(map(str, ids_sorted)) + ("\n" if ids_sorted else ""))

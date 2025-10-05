@@ -1,2 +1,1 @@
-# Marks the "scripts" directory as a Python package.
-# (Intentionally empty.)
+# Marks the "indexers" folder as a Python package. Keep empty.
