@@ -1,0 +1,5 @@
+# Minimal runtime deps for Stage 1
+requests
+Flask
+pymongo
+psycopg2-binary

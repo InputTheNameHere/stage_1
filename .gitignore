@@ -1,0 +1,14 @@
+# IDE / środowisko
+.idea/
+.venv/
+__pycache__/
+*.pyc
+
+# dane i generowane pliki
+control/
+datamarts/
+data storage/
+data_storage/
+
+# systemowe
+.DS_Store
